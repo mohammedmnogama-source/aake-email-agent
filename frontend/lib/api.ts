@@ -10,14 +10,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(path, { ...options, headers });
 
-  if (res.status === 401) {
-    clearToken();
-    window.location.href = '/login';
-    throw new Error('Unauthorized');
-  }
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
+    if (res.status === 401 && !path.includes('/auth/login')) {
+      clearToken();
+      window.location.href = '/login';
+    }
     throw new Error(err.detail ?? 'Request failed');
   }
 
