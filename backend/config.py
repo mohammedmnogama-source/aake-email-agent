@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # CORS — comma-separated list of allowed origins
     cors_origins: str = "http://localhost:3000"
 
+    # Optional: plain-text password to auto-seed on first deploy (never stored plain)
+    dashboard_password: str = ""
+
     # Zoho CRM
     zoho_client_id: str = ""
     zoho_client_secret: str = ""

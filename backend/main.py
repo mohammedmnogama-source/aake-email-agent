@@ -23,9 +23,25 @@ from backend.routers import (
 )
 
 
+def _seed_password_if_missing():
+    """If DASHBOARD_PASSWORD env var is set and DB has no password yet, hash and store it."""
+    if not settings.dashboard_password:
+        return
+    import bcrypt
+    from backend.database.connection import get_connection
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='dashboard_password'").fetchone()
+        if row and row[0]:
+            return  # already set — never overwrite
+        hashed = bcrypt.hashpw(settings.dashboard_password.encode(), bcrypt.gensalt(12)).decode()
+        conn.execute("UPDATE settings SET value=? WHERE key='dashboard_password'", (hashed,))
+        conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db(settings.database_path)
+    _seed_password_if_missing()
     from backend import scheduler
     scheduler.start()
     yield
