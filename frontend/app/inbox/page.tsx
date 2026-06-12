@@ -84,7 +84,7 @@ export default function InboxPage() {
   const [redrafting, setRedrafting]     = useState(false);
   const [threadSummary, setThreadSummary] = useState<{ thread_count: number; summary_text: string } | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
-  const [dailySummary, setDailySummary] = useState<{ email_count: number; summary_text: string } | null>(null);
+  const [dailySummary, setDailySummary] = useState<{ email_count: number; overview: string; attention: { title: string; contact: string; detail: string }[]; vendors: { title: string; contact: string; detail: string }[]; priorities: string[] } | null>(null);
   const [dailyLoading, setDailyLoading] = useState(false);
   const [redraftNote, setRedraftNote]   = useState('');
   const [message, setMessage]           = useState('');
@@ -554,13 +554,18 @@ export default function InboxPage() {
             </p>
             <button onClick={() => setDailySummary(null)} className="text-violet-300 hover:text-violet-600 text-lg leading-none">×</button>
           </div>
-          <div className="text-sm text-slate-700 leading-relaxed max-h-64 overflow-y-auto">
-            {dailySummary.summary_text.split('\n').map((line, i) => {
-              const isHeader = /^(OVERVIEW|NEEDS YOUR ATTENTION|VENDORS \/ QUOTES|TODAY'S PRIORITIES)$/.test(line.trim());
-              return isHeader
-                ? <p key={i} className="text-xs font-bold text-violet-700 uppercase tracking-wide mt-3 mb-1 first:mt-0">{line.trim()}</p>
-                : <p key={i} className={line.trim() === '' ? 'mt-1' : 'text-sm text-slate-700'}>{line}</p>;
-            })}
+          <div className="text-sm text-slate-700 leading-relaxed max-h-64 overflow-y-auto space-y-1">
+            <p className="text-slate-700">{dailySummary.overview}</p>
+            {dailySummary.attention.length > 0 && (
+              <div className="mt-2"><p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1">🔔 Needs Attention</p>
+                {dailySummary.attention.map((a, i) => <p key={i} className="text-slate-700">• {a.title}: {a.detail}</p>)}
+              </div>
+            )}
+            {dailySummary.priorities.length > 0 && (
+              <div className="mt-2"><p className="text-xs font-bold text-green-600 uppercase tracking-wide mb-1">✅ Priorities</p>
+                {dailySummary.priorities.map((p, i) => <p key={i} className="text-slate-700">{i + 1}. {p}</p>)}
+              </div>
+            )}
           </div>
         </div>
       )}
