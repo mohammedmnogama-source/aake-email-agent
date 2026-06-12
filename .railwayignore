@@ -1,0 +1,16 @@
+frontend/node_modules/
+frontend/.next/
+data/
+chromadb/
+*.db
+*.db-shm
+*.db-wal
+*.pdf
+*.png
+*.jpg
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
