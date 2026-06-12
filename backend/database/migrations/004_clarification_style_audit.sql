@@ -42,13 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_emails_from        ON emails(from_address);
 PRAGMA foreign_keys = ON;
 
 -- ── ai_suggestions additions ──────────────────────────────────────────────────
-ALTER TABLE ai_suggestions ADD COLUMN needs_clarification   INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE ai_suggestions ADD COLUMN clarification_type    TEXT;     -- 'action' | 'recipient'
-ALTER TABLE ai_suggestions ADD COLUMN clarification_question TEXT;
-ALTER TABLE ai_suggestions ADD COLUMN clarification_options  TEXT;   -- JSON array (required for type=action, includes "Other (type below)")
-ALTER TABLE ai_suggestions ADD COLUMN suggested_recipients   TEXT;   -- JSON array of {vendor_id,name,email,why}
-ALTER TABLE ai_suggestions ADD COLUMN clarification_round    INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE ai_suggestions ADD COLUMN manually_handled       INTEGER NOT NULL DEFAULT 0;
+-- Columns already included in 000_baseline_rebuilt.sql — no ALTER needed on fresh DB.
 
 -- ── clarification_responses ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS clarification_responses (

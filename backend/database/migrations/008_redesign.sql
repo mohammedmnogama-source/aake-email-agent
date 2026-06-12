@@ -140,7 +140,5 @@ CREATE TABLE IF NOT EXISTS quotations (
 );
 
 -- -----------------------------------------------------------------------
--- Step 7: Add summary column to ai_suggestions
+-- Step 7: summary column already in 000_baseline_rebuilt.sql — no ALTER needed.
 -- -----------------------------------------------------------------------
-
-ALTER TABLE ai_suggestions ADD COLUMN summary TEXT;
