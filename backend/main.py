@@ -23,6 +23,33 @@ from backend.routers import (
 )
 
 
+def _apply_pending_import():
+    """One-time data migration: if an uploaded DB snapshot sits next to the live
+    DB as 'agent_import.db', swap it in before anything opens the database.
+    Runs before init_db so there is no open connection to corrupt. Idempotent —
+    the import file is removed after a successful swap."""
+    import os
+    import shutil
+
+    db = settings.database_path
+    folder = os.path.dirname(db) or "."
+    pending = os.path.join(folder, "agent_import.db")
+
+    if not os.path.exists(pending) or os.path.getsize(pending) == 0:
+        return
+
+    # Drop any stale WAL/SHM sidecar files of the current DB so SQLite does not
+    # try to replay an old write-ahead log against the freshly swapped-in file.
+    for ext in ("-wal", "-shm"):
+        try:
+            os.remove(db + ext)
+        except FileNotFoundError:
+            pass
+
+    shutil.move(pending, db)
+    print(f"[startup] Imported database snapshot applied from {pending} -> {db}")
+
+
 def _seed_password_if_missing():
     """If DASHBOARD_PASSWORD env var is set and DB has no password yet, hash and store it."""
     if not settings.dashboard_password:
@@ -40,6 +67,7 @@ def _seed_password_if_missing():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _apply_pending_import()
     init_db(settings.database_path)
     _seed_password_if_missing()
     from backend import scheduler
