@@ -287,19 +287,41 @@ def learning_stats():
 
 
 @router.get("")
-def list_emails(status: str = None, limit: int = 50):
+def list_emails(status: str = None, limit: int = 50, ids: str = None):
     """
     List all emails in the database.
 
     Optional filter: ?status=pending  or  ?status=decided  etc.
+    Optional filter: ?ids=12,45,67  → returns exactly those emails (used by the
+    daily briefing, where each point links to the emails it refers to).
 
     Each item includes the AI suggestion if one exists.
     """
     from backend.database.connection import get_connection
 
+    # Same columns used by every branch below
+    cols = (
+        "SELECT e.id, e.subject, e.from_address, e.from_name, e.body_preview, "
+        "e.received_at, e.fetched_at, e.status, e.source, e.is_read, "
+        "s.category, s.suggested_action, s.summary, s.draft_content, s.auto_finished, "
+        "s.manually_handled, "
+        "(SELECT COUNT(*) FROM approved_drafts WHERE email_id = e.id) as was_approved "
+        "FROM emails e "
+        "LEFT JOIN ai_suggestions s ON s.email_id = e.id "
+    )
+
     conn = get_connection()
     try:
-        if status:
+        if ids:
+            id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+            if not id_list:
+                return []
+            placeholders = ",".join("?" * len(id_list))
+            rows = conn.execute(
+                cols + f"WHERE e.id IN ({placeholders}) ORDER BY e.id DESC",
+                id_list,
+            ).fetchall()
+        elif status:
             rows = conn.execute(
                 "SELECT e.id, e.subject, e.from_address, e.from_name, e.body_preview, "
                 "e.received_at, e.fetched_at, e.status, e.source, e.is_read, "
@@ -726,8 +748,9 @@ def daily_summary(_: str = Depends(require_auth)):
         for e in rows:
             status = "accepted" if e["was_approved"] else ("dismissed" if e["manually_handled"] else "pending")
             ai_note = (e["summary"] or "")[:80]  # cap at 80 chars
+            # Prefix with #id so Claude can tag each briefing item with the emails it refers to
             line = (
-                f"[{e['category'] or 'other'}] {(e['subject'] or '(no subject)')[:60]} "
+                f"#{e['id']} [{e['category'] or 'other'}] {(e['subject'] or '(no subject)')[:60]} "
                 f"| {e['from_name'] or e['from_address'] or 'Unknown'} | {status}"
             )
             if ai_note:
@@ -747,9 +770,11 @@ def daily_summary(_: str = Depends(require_auth)):
             f"Emails from the last 48 hours ({len(rows)} total):\n\n"
             f"{emails_block}\n\n"
             "Return ONLY this JSON — keep each string value SHORT (under 120 chars):\n"
-            '{"overview":"...","attention":[{"title":"...","contact":"...","detail":"..."}],'
-            '"vendors":[{"title":"...","contact":"...","detail":"..."}],"priorities":["...","...","..."]}\n\n'
+            '{"overview":"...","attention":[{"title":"...","contact":"...","detail":"...","email_ids":[1,2]}],'
+            '"vendors":[{"title":"...","contact":"...","detail":"...","email_ids":[3]}],"priorities":["...","...","..."]}\n\n'
             "Rules: attention = pending emails needing action only. vendors = vendor replies/quotes only. "
+            "Every attention and vendor item MUST include email_ids — the list of #numbers (integers only) "
+            "of the emails from the list above that the item refers to. "
             "priorities = max 3 actions. Skip spam/internal/dismissed/accepted. No markdown."
         )
 

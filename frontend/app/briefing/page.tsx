@@ -1,21 +1,31 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '../../lib/api';
+
+type BriefItem = { title: string; contact: string; detail: string; email_ids?: number[] };
 
 type Briefing = {
   email_count: number;
   generated_at?: string;
   overview: string;
-  attention: { title: string; contact: string; detail: string }[];
-  vendors:   { title: string; contact: string; detail: string }[];
+  attention: BriefItem[];
+  vendors:   BriefItem[];
   priorities: string[];
 };
 
 export default function BriefingPage() {
+  const router = useRouter();
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [loading, setLoading]   = useState(false);
   const [initLoading, setInitLoading] = useState(true);
   const [error, setError]       = useState('');
+
+  // Open the inbox filtered to just the emails behind a briefing point
+  function openEmails(item: BriefItem) {
+    if (!item.email_ids || item.email_ids.length === 0) return;
+    router.push(`/inbox?ids=${item.email_ids.join(',')}`);
+  }
 
   // Load cached briefing on mount
   useEffect(() => {
@@ -126,18 +136,30 @@ export default function BriefingPage() {
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {briefing.attention.map((item, i) => (
-                    <div key={i} className="flex gap-3 p-3 rounded-lg bg-amber-50 border border-amber-100">
-                      <div className="mt-0.5 w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800">{item.title}</p>
-                        {item.contact && (
-                          <p className="text-xs text-slate-500 mt-0.5">From: {item.contact}</p>
-                        )}
-                        <p className="text-sm text-slate-600 mt-1 leading-relaxed">{item.detail}</p>
+                  {briefing.attention.map((item, i) => {
+                    const clickable = (item.email_ids?.length ?? 0) > 0;
+                    return (
+                      <div
+                        key={i}
+                        onClick={() => openEmails(item)}
+                        className={`flex gap-3 p-3 rounded-lg bg-amber-50 border border-amber-100 ${clickable ? 'cursor-pointer hover:bg-amber-100 hover:border-amber-300 transition-colors' : ''}`}
+                      >
+                        <div className="mt-0.5 w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+                          {item.contact && (
+                            <p className="text-xs text-slate-500 mt-0.5">From: {item.contact}</p>
+                          )}
+                          <p className="text-sm text-slate-600 mt-1 leading-relaxed">{item.detail}</p>
+                          {clickable && (
+                            <p className="text-xs font-medium text-amber-700 mt-2">
+                              → Open {item.email_ids!.length} email{item.email_ids!.length > 1 ? 's' : ''}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -153,18 +175,30 @@ export default function BriefingPage() {
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {briefing.vendors.map((item, i) => (
-                    <div key={i} className="flex gap-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                      <div className="mt-0.5 w-2 h-2 rounded-full bg-blue-400 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800">{item.title}</p>
-                        {item.contact && (
-                          <p className="text-xs text-slate-500 mt-0.5">{item.contact}</p>
-                        )}
-                        <p className="text-sm text-slate-600 mt-1 leading-relaxed">{item.detail}</p>
+                  {briefing.vendors.map((item, i) => {
+                    const clickable = (item.email_ids?.length ?? 0) > 0;
+                    return (
+                      <div
+                        key={i}
+                        onClick={() => openEmails(item)}
+                        className={`flex gap-3 p-3 rounded-lg bg-blue-50 border border-blue-100 ${clickable ? 'cursor-pointer hover:bg-blue-100 hover:border-blue-300 transition-colors' : ''}`}
+                      >
+                        <div className="mt-0.5 w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+                          {item.contact && (
+                            <p className="text-xs text-slate-500 mt-0.5">{item.contact}</p>
+                          )}
+                          <p className="text-sm text-slate-600 mt-1 leading-relaxed">{item.detail}</p>
+                          {clickable && (
+                            <p className="text-xs font-medium text-blue-700 mt-2">
+                              → Open {item.email_ids!.length} email{item.email_ids!.length > 1 ? 's' : ''}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

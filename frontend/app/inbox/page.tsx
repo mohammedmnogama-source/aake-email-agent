@@ -92,6 +92,8 @@ export default function InboxPage() {
   // Search + filter state
   const [search, setSearch]           = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
+  // When set (comma-separated ids), inbox shows only the emails behind a briefing point
+  const [briefingFilter, setBriefingFilter] = useState<string | null>(null);
 
   // ERP — RFQ modal
   const [erpModal, setErpModal]       = useState(false);
@@ -114,16 +116,31 @@ export default function InboxPage() {
   const [composeDraft, setComposeDraft] = useState('');
   const [composeLoading, setComposeLoading] = useState(false);
 
-  function loadEmails() {
+  function loadEmails(ids?: string | null) {
     setLoading(true);
-    get('/api/inbox')
+    const url = ids ? `/api/inbox?ids=${ids}` : '/api/inbox';
+    get(url)
       .then(data => setEmails(Array.isArray(data) ? data : []))
       .catch(() => setEmails([]))
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => {
+  // Clear the "from briefing" filter and go back to the full inbox
+  function clearBriefingFilter() {
+    setBriefingFilter(null);
+    window.history.replaceState({}, '', '/inbox');
     loadEmails();
+  }
+
+  useEffect(() => {
+    // If we arrived from a daily-briefing point (/inbox?ids=12,45), show only those
+    const ids = new URLSearchParams(window.location.search).get('ids');
+    if (ids) {
+      setBriefingFilter(ids);
+      loadEmails(ids);
+    } else {
+      loadEmails();
+    }
     // Load current sent_history count on mount so the Learn button shows it
     get('/api/inbox/sent-sync/status').then(s => setSentSync(s)).catch(() => {});
     // Load learning stats
@@ -133,10 +150,10 @@ export default function InboxPage() {
   // Silent auto-refresh every 2 minutes to pick up scheduler-fetched emails
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!syncing) loadEmails();
+      if (!syncing) loadEmails(briefingFilter);
     }, 120_000);
     return () => clearInterval(interval);
-  }, [syncing]);
+  }, [syncing, briefingFilter]);
 
   async function handleSync() {
     setSyncing(true);
@@ -593,6 +610,19 @@ export default function InboxPage() {
               {cat.replace(/_/g,' ')}: {s.pct_clean}%
             </span>
           ))}
+        </div>
+      )}
+
+      {/* ── "From briefing" banner ── */}
+      {briefingFilter && (
+        <div className="shrink-0 flex items-center justify-between gap-3 bg-violet-600 text-white px-4 py-2 text-sm">
+          <span>📋 Showing {emails.length} email{emails.length !== 1 ? 's' : ''} from your daily briefing</span>
+          <button
+            onClick={clearBriefingFilter}
+            className="bg-white/20 hover:bg-white/30 rounded px-3 py-1 text-xs font-medium transition-colors"
+          >
+            ✕ Back to full inbox
+          </button>
         </div>
       )}
 
