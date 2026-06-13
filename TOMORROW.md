@@ -1,6 +1,6 @@
 # AAKE Email Agent — Read This First (Next Session)
 
-Last updated: **2026-06-13** · Read before starting any session.
+Last updated: **2026-06-14** · Read before starting any session.
 
 ---
 
@@ -8,8 +8,8 @@ Last updated: **2026-06-13** · Read before starting any session.
 
 The app is **live on Railway** now (it used to run only on your Mac). All your real
 data — company brain, contacts, vendors, emails, quotes — has been copied to the
-hosted version. The latest session added clickable daily-briefing points and fixed
-the bug where the briefing page went blank.
+hosted version. Recent sessions added clickable daily-briefing points, fixed the
+blank-briefing bug, and **fixed email syncing** (the app now reads your main Inbox).
 
 **Open the app:** https://aake-frontend-production.up.railway.app
 **Password:** `Mohammusta15151`
@@ -19,7 +19,7 @@ parts automatically. (Full deployment details are in `CLAUDE.md` → "Deployment
 
 ---
 
-## What we did in the last session (2026-06-13)
+## What we did in the last sessions (2026-06-13 → 06-14)
 
 1. **Deployed the whole app to Railway** (backend + frontend + a persistent disk for the database).
 2. **Migrated all local data to Railway** — 86 company-brain facts, 466 contacts, 19 vendors,
@@ -30,19 +30,25 @@ parts automatically. (Full deployment details are in `CLAUDE.md` → "Deployment
    you jump back to the full inbox.
 4. **Fixed the blank-briefing bug** — the page no longer clears when you navigate away;
    it stays until you press Refresh. (Cause: a backend route collision, now fixed.)
-5. Fixed deploy blockers along the way: fresh-DB migration crash, a Next.js security
+5. **Fixed email syncing (06-14)** — the app was only watching a side folder ("AI Agent")
+   but your emails arrive in the **main Inbox**, so it kept saying "no new emails." Switched
+   it to watch `INBOX` directly. First sync of a folder now only pulls the **last 2 days**
+   (so it doesn't drag in years of history), then tracks new mail from there. Your recent
+   emails (UPS quote, EXTERNAL RFQ) are now in the app.
+6. Fixed deploy blockers along the way: fresh-DB migration crash, a Next.js security
    bump, and seeding the dashboard password on the hosted DB.
 
 ---
 
-## ✅ Quick test to do first (5 min) — confirm last session's work
+## ✅ Quick test to do first (5 min) — confirm recent work
 
-1. Open https://aake-frontend-production.up.railway.app/briefing → click **Refresh** once.
-2. Click a point like "RFQ for ASUS and NVIDIA" → it should open just those emails.
-3. Click **Briefing** in the top nav to come back → it should **stay** (not go blank).
+1. **Email sync:** open the Inbox → click **Sync**. Your newest real emails should appear
+   at the top (newsletters/spam included — the AI tags them, you Dismiss what you don't want).
+2. **Briefing:** open `/briefing` → click **Refresh** → click a point like "RFQ for ASUS
+   and NVIDIA" → it opens just those emails. Click **Briefing** in the nav to return → it
+   should **stay** (not go blank).
 
-If any briefing point is NOT clickable, that point didn't get tagged with email IDs —
-tell Claude and it'll tighten the AI prompt.
+If a briefing point is NOT clickable, it didn't get tagged with email IDs — tell Claude.
 
 ---
 
@@ -61,6 +67,9 @@ Nothing is broken. These are housekeeping / nice-to-haves.
 
 ## Ideas / possible future work (not committed — decide later)
 
+- **Spam/newsletter filter** — now that the app watches the whole Inbox, it also pulls in
+  newsletters/spam (the AI tags them "spam" and you Dismiss them). If it gets noisy, we can
+  auto-skip senders/domains (there's already a `manually_handled_patterns` table for this).
 - Make the **Priorities** list on the briefing clickable too (right now only Attention & Vendors link to emails).
 - Email/push notification when an important email arrives (instead of checking manually).
 - Better thread grouping for the "Summarize Thread" feature.

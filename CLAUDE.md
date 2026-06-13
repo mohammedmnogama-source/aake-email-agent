@@ -103,6 +103,10 @@ When Claude can't determine the right action, it returns `needs_clarification=Tr
 - **PII redaction runs before every Claude call** — never send raw `body_text` to `call_ai()`
 - **`call_ai()` is in `gemini_client.py`** — the filename is legacy; it uses `anthropic.Anthropic`
 - **cPanel IMAP quirk** — all folders are prefixed `INBOX.` (e.g. `INBOX.AI Agent`, `INBOX.Drafts`)
+- **Watched folder** — the `target_folder` setting (now API-editable) controls which IMAP
+  folder is synced. As of 2026-06-14 it is **`INBOX`** (the main inbox), switched from
+  `INBOX.AI Agent` because mail was arriving in the main inbox. The fetcher pulls only the
+  last `_FIRST_SYNC_DAYS` (2) days on the FIRST sync of a folder, then goes incremental by UID.
 - **Fresh connection per request** — cPanel aggressively times out idle IMAP connections
 
 ## Environment Variables (`.env`)
