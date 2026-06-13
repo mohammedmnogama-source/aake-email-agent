@@ -9,6 +9,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depe
 
 _EDITABLE_KEYS = {
     "poll_interval_min", "test_mode", "use_style_for_drafts", "ai_model",
+    "target_folder",
 }
 
 

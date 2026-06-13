@@ -1,8 +1,13 @@
 import json
-from datetime import timezone
+from datetime import timezone, date as _date, timedelta
 
 import bleach
 from imap_tools import A, MailMessage
+
+# On the FIRST sync of a folder (no prior UID recorded), only pull emails from
+# the last N days — so switching to a big mailbox like INBOX doesn't fetch and
+# AI-analyze years of history. After that, syncing is incremental by UID.
+_FIRST_SYNC_DAYS = 2
 
 from backend.database.connection import get_connection
 from backend.email.imap_client import get_mailbox
@@ -31,16 +36,26 @@ def fetch_new_emails() -> list[int]:
 
         with get_mailbox() as mb:
             mb.folder.set(folder_path)
-            messages = list(mb.fetch(A(uid=f"{last_uid + 1}:*"), mark_seen=False))
+            if last_uid == 0:
+                # First time syncing this folder: only pull the last few days, then
+                # baseline to the folder's current highest UID so later syncs are
+                # incremental (avoids fetching the entire mailbox history).
+                since = _date.today() - timedelta(days=_FIRST_SYNC_DAYS)
+                messages = list(mb.fetch(A(date_gte=since), mark_seen=False))
+                existing_uids = mb.uids()
+                baseline_uid = max((int(u) for u in existing_uids), default=0)
+            else:
+                messages = list(mb.fetch(A(uid=f"{last_uid + 1}:*"), mark_seen=False))
+                baseline_uid = last_uid
 
         if not messages:
             sync_tracker._update(message="No new emails found.")
-            _update_sync(conn, folder_path, last_uid, 0)
+            _update_sync(conn, folder_path, baseline_uid, 0)
             return []
 
         sync_tracker._update(message=f"Found {len(messages)} new email(s) — saving to database...")
 
-        max_uid = last_uid
+        max_uid = baseline_uid
         for msg in messages:
             uid = int(msg.uid)
             raw = _parse_message(msg, folder_path)
