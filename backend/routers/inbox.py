@@ -352,7 +352,7 @@ def list_emails(status: str = None, limit: int = 50, ids: str = None):
     return [dict(r) for r in rows]
 
 
-@router.get("/{email_id}")
+@router.get("/{email_id:int}")
 def get_email(email_id: int):
     """
     Full detail for one email: the email itself + the AI suggestion + draft reply.
@@ -689,44 +689,10 @@ def reject_draft(email_id: int):
 
 
 @router.get("/daily-summary")
-def get_daily_summary(debug: int = 0, _: str = Depends(require_auth)):
-    """Return the last cached daily briefing, or null if none exists.
-    ?debug=1 returns TEMPORARY DB diagnostics instead (remove after use)."""
+def get_daily_summary(_: str = Depends(require_auth)):
+    """Return the last cached daily briefing, or null if none exists."""
     import json as _json
     from backend.database.connection import get_connection
-
-    if debug:
-        import os
-        from backend.database import connection as _c
-        out = {"DB_PATH": _c._DB_PATH,
-               "agent_import_exists": os.path.exists("/data/agent_import.db")}
-        try:
-            out["data_dir_listing"] = sorted(os.listdir("/data"))
-        except Exception as e:
-            out["data_dir_listing"] = str(e)
-        c = get_connection()
-        try:
-            out["journal_mode"] = c.execute("PRAGMA journal_mode").fetchone()[0]
-            sch = c.execute("SELECT sql FROM sqlite_master WHERE name='daily_briefing'").fetchone()
-            out["daily_briefing_schema"] = sch[0] if sch else None
-            rows = c.execute("SELECT id, generated_at, email_count, length(attention_json) AS att_len FROM daily_briefing").fetchall()
-            out["daily_briefing_rows"] = [dict(r) for r in rows]
-            c.execute("INSERT INTO daily_briefing (id, generated_at, email_count, overview, attention_json, vendors_json, priorities_json) "
-                      "VALUES (1, 'PROBE', 999, 'probe', '[]', '[]', '[]') "
-                      "ON CONFLICT(id) DO UPDATE SET generated_at='PROBE', email_count=999")
-            c.commit()
-            chk = c.execute("SELECT generated_at, email_count FROM daily_briefing WHERE id=1").fetchone()
-            out["probe_same_conn"] = dict(chk) if chk else None
-        finally:
-            c.close()
-        c2 = get_connection()
-        try:
-            chk2 = c2.execute("SELECT generated_at, email_count FROM daily_briefing WHERE id=1").fetchone()
-            out["probe_fresh_conn"] = dict(chk2) if chk2 else None
-        finally:
-            c2.close()
-        return out
-
     conn = get_connection()
     try:
         row = conn.execute("SELECT * FROM daily_briefing WHERE id = 1").fetchone()

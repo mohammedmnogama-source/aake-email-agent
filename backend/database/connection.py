@@ -16,13 +16,7 @@ def get_connection() -> sqlite3.Connection:
         raise RuntimeError("Database not initialised. Call init_db() first.")
     conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    # Use the plain rollback journal, NOT WAL. WAL relies on a shared-memory
-    # index (-shm) that does not work on network-backed filesystems like the
-    # Railway volume — there, a write committed on one connection is invisible
-    # to other connections until a checkpoint, which made saved data (e.g. the
-    # daily briefing) appear to vanish. DELETE writes straight to the main DB
-    # file and is immediately visible everywhere. Fine for a single-user app.
-    conn.execute("PRAGMA journal_mode = DELETE")
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
