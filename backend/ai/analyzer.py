@@ -23,6 +23,7 @@ import sqlite3
 from backend.ai.gemini_client import call_ai
 from backend.ai.redactor import redact
 from backend.ai.deal_ai import _build_style_block
+from backend.ai.thread_summarizer import build_thread_summary
 from backend.ai.models import GeminiResponse, EmailCategory, SuggestedAction
 from backend.database.connection import get_connection
 from backend.database.repositories import suggestions as suggestion_repo
@@ -236,6 +237,22 @@ def _analyze_one(conn: sqlite3.Connection, row: sqlite3.Row, model: str) -> None
 
     # Step 8.5: Auto-finish if category is trusted (Phase 2)
     _maybe_auto_finish(conn, email_id, category, result_dict)
+
+    # Step 8.6: Build the whole-thread briefing and store it on the suggestion.
+    # This is the "context summary" Mo sees in the ERP — automatic at sync time.
+    # Skip spam (not worth the AI call). Never let a failure here block the sync.
+    if category != "spam":
+        try:
+            result = build_thread_summary(conn, email_id)
+            if result:
+                _count, thread_text = result
+                conn.execute(
+                    "UPDATE ai_suggestions SET thread_summary = ? WHERE email_id = ?",
+                    (thread_text, email_id),
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[analyzer] Warning: thread summary failed for email {email_id}: {e}")
 
     # Step 9: Index this email to ChromaDB for future RAG queries
     try:

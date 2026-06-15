@@ -10,7 +10,6 @@ POST /api/inbox/{id}/approve  — save the AI draft to IMAP Drafts folder
 POST /api/inbox/{id}/reject   — mark email as rejected (no draft needed)
 """
 
-import re
 import threading
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -303,7 +302,7 @@ def list_emails(status: str = None, limit: int = 50, ids: str = None):
     cols = (
         "SELECT e.id, e.subject, e.from_address, e.from_name, e.body_preview, "
         "e.received_at, e.fetched_at, e.status, e.source, e.is_read, "
-        "s.category, s.suggested_action, s.summary, s.draft_content, s.auto_finished, "
+        "s.category, s.suggested_action, s.summary, s.thread_summary, s.draft_content, s.auto_finished, "
         "s.manually_handled, "
         "(SELECT COUNT(*) FROM approved_drafts WHERE email_id = e.id) as was_approved "
         "FROM emails e "
@@ -325,7 +324,7 @@ def list_emails(status: str = None, limit: int = 50, ids: str = None):
             rows = conn.execute(
                 "SELECT e.id, e.subject, e.from_address, e.from_name, e.body_preview, "
                 "e.received_at, e.fetched_at, e.status, e.source, e.is_read, "
-                "s.category, s.suggested_action, s.summary, s.draft_content, s.auto_finished, "
+                "s.category, s.suggested_action, s.summary, s.thread_summary, s.draft_content, s.auto_finished, "
                 "s.manually_handled, "
                 "(SELECT COUNT(*) FROM approved_drafts WHERE email_id = e.id) as was_approved "
                 "FROM emails e "
@@ -338,7 +337,7 @@ def list_emails(status: str = None, limit: int = 50, ids: str = None):
             rows = conn.execute(
                 "SELECT e.id, e.subject, e.from_address, e.from_name, e.body_preview, "
                 "e.received_at, e.fetched_at, e.status, e.source, e.is_read, "
-                "s.category, s.suggested_action, s.summary, s.draft_content, s.auto_finished, "
+                "s.category, s.suggested_action, s.summary, s.thread_summary, s.draft_content, s.auto_finished, "
                 "s.manually_handled, "
                 "(SELECT COUNT(*) FROM approved_drafts WHERE email_id = e.id) as was_approved "
                 "FROM emails e "
@@ -825,114 +824,34 @@ def daily_summary(_: str = Depends(require_auth)):
         conn.close()
 
 
-def _strip_re_fwd(subject: str) -> str:
-    """Strip Re:/Fwd: prefixes to get the base subject for thread grouping."""
-    s = (subject or "").strip()
-    while True:
-        stripped = re.sub(r'^(Re|RE|Fwd|FW|Fw|AW|回复):\s*', '', s).strip()
-        if stripped == s:
-            break
-        s = stripped
-    return s.lower()
-
-
 @router.post("/{email_id}/thread-summary")
 def summarize_thread(email_id: int, _: str = Depends(require_auth)):
     """
-    Summarize the full email thread related to this email.
-    Groups by base subject (strips Re:/Fwd:). Falls back to same sender if thread is thin.
-    Returns a structured plain-text summary with context, status, and next steps.
+    Summarize the full email thread related to this email — on demand.
+    New emails get this automatically at sync time (stored in ai_suggestions.thread_summary);
+    this endpoint is the fallback for older emails synced before that feature.
+    Uses the same shared builder, then persists the result so it shows next time too.
     """
     from backend.database.connection import get_connection
-    from backend.ai.gemini_client import call_ai
-    from backend.ai.redactor import redact
+    from backend.ai.thread_summarizer import build_thread_summary
 
     conn = get_connection()
     try:
-        email = conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
-        if not email:
+        result = build_thread_summary(conn, email_id)
+        if result is None:
             raise HTTPException(status_code=404, detail="Email not found")
+        thread_count, summary_text = result
 
-        base_subj = _strip_re_fwd(email["subject"] or "")
-
-        # Fetch all emails from last 90 days for threading
-        all_rows = conn.execute(
-            "SELECT id, subject, from_name, from_address, to_addresses, received_at, body_text, body_preview "
-            "FROM emails WHERE datetime(received_at) >= datetime('now', '-90 days') "
-            "ORDER BY received_at ASC"
-        ).fetchall()
-
-        # Match by base subject
-        thread = [r for r in all_rows if _strip_re_fwd(r["subject"] or "") == base_subj]
-
-        # If only 1 match, fall back to same sender (last 30 days)
-        if len(thread) <= 1:
-            sender = (email["from_address"] or "").lower()
-            thread = [
-                r for r in all_rows
-                if (r["from_address"] or "").lower() == sender
-            ]
-
-        # Build thread text, redacting PII from each body
-        parts = []
-        for i, e in enumerate(thread, 1):
-            body_raw = e["body_text"] or e["body_preview"] or "(empty)"
-            body_clean, _ = redact(body_raw)
-            parts.append(
-                f"--- EMAIL {i} of {len(thread)} ---\n"
-                f"Date:    {e['received_at'] or 'unknown'}\n"
-                f"From:    {e['from_name'] or e['from_address'] or 'Unknown'}\n"
-                f"To:      {e['to_addresses'] or '—'}\n"
-                f"Subject: {e['subject'] or '(no subject)'}\n\n"
-                f"{body_clean[:2000]}"
-            )
-        thread_text = "\n\n".join(parts)
-
-        # Load business facts for context
-        facts_rows = conn.execute(
-            "SELECT fact FROM business_facts ORDER BY category, id"
-        ).fetchall()
-        facts_block = "\n".join(r["fact"] for r in facts_rows) if facts_rows else ""
-
-        model_row = conn.execute("SELECT value FROM settings WHERE key = 'ai_model'").fetchone()
-        model = model_row["value"] if model_row else "claude-haiku-4-5-20251001"
-
-        system_prompt = (
-            "You are an executive assistant for Mo (Mustafa Fakhruddin, Enterprise Sales Manager) "
-            "at AAKE Kuwait — an IT reseller dealing in Cisco, Fortinet, HP, Dell, Microsoft, etc.\n\n"
-            f"Business context:\n{facts_block}\n\n"
-            "Analyze the email thread below and give Mo a clear, concise briefing. "
-            "Be direct, professional, and business-focused."
+        # Persist it so the ERP shows it automatically next time (and only pays once).
+        conn.execute(
+            "UPDATE ai_suggestions SET thread_summary = ? WHERE email_id = ?",
+            (summary_text, email_id),
         )
-
-        user_message = (
-            f"Here is an email thread ({len(thread)} email(s)), oldest to newest:\n\n"
-            f"{thread_text}\n\n"
-            "Respond in this exact format — no extra text:\n\n"
-            "CONTEXT\n"
-            "[Who are the parties? What is this thread about? 2–3 sentences.]\n\n"
-            "SUMMARY\n"
-            "[What has been discussed, sent, requested, or agreed so far? 3–5 sentences.]\n\n"
-            "STATUS\n"
-            "[Where does this stand right now? What is waiting or unresolved? 1–2 sentences.]\n\n"
-            "NEXT STEPS\n"
-            "- [Most important action]\n"
-            "- [Second action if needed]\n"
-            "- [Third action if needed]"
-        )
-
-        result, _, _ = call_ai(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            model=model,
-            max_tokens=700,
-            purpose="thread_summary",
-            raw_text=True,
-        )
+        conn.commit()
 
         return {
-            "thread_count": len(thread),
-            "summary_text": result,
+            "thread_count": thread_count,
+            "summary_text": summary_text,
         }
 
     finally:
