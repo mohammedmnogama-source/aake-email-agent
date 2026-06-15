@@ -377,25 +377,21 @@ def list_sent(limit: int = 50):
 
     capped = max(1, min(limit, 100))
 
-    # Step 1: pull all UIDs (headers only — fast), keep the newest `capped`.
+    # Step 1: fast UID search (numbers only, no header download), keep newest `capped`.
+    # UIDs increase over time, so the largest UIDs are the newest emails.
     with get_mailbox() as mb:
         mb.folder.set(sent_folder, readonly=True)
-        headers = list(mb.fetch(A(all=True), mark_seen=False, bulk=True, headers_only=True))
-    headers.sort(key=lambda m: int(m.uid), reverse=True)
-    top = headers[:capped]
-    top_uids = [m.uid for m in top]
-    if not top_uids:
-        return {"folder": sent_folder, "emails": []}
-
-    # Step 2: fetch full bodies for just those UIDs.
-    with get_mailbox() as mb:
-        mb.folder.set(sent_folder, readonly=True)
+        all_uids = mb.uids()  # list[str] — just a SEARCH, very fast
+        top_uids = sorted(all_uids, key=int, reverse=True)[:capped]
+        if not top_uids:
+            return {"folder": sent_folder, "emails": []}
+        # Step 2: fetch full bodies for only those UIDs (same connection).
         msgs = list(mb.fetch(A(uid=top_uids), mark_seen=False, bulk=True))
 
     by_uid = {m.uid: m for m in msgs}
     out = []
-    for h in top:  # preserve newest-first order
-        m = by_uid.get(h.uid)
+    for uid in top_uids:  # preserve newest-first order
+        m = by_uid.get(uid)
         if not m:
             continue
         body = m.text or _strip_html(m.html or "")
