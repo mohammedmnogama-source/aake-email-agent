@@ -352,20 +352,22 @@ def list_emails(status: str = None, limit: int = 50, ids: str = None):
 
 
 @router.get("/sent")
-def list_sent(limit: int = 50):
+def list_sent(limit: int = 25):
     """
     Read recent emails from the Sent folder (live IMAP read — NOT stored in the DB).
     Returns newest first. Used by the ERP 'Sent' tab so Mo can log a sent email
     against a deal. Auth is enforced at the router level.
+
+    FAST: this only downloads email HEADERS (subject/to/date), not the full bodies.
+    The body for a single email is fetched on demand via GET /api/inbox/sent/{uid}
+    when Mo clicks it. Downloading 25 headers is seconds; downloading 50 full bodies
+    was 11-19s (the old behaviour).
     """
     from datetime import timezone
     from imap_tools import A
     from backend.database.connection import get_connection
     from backend.email.imap_client import get_mailbox
-    from backend.email.fetcher import _strip_html
     from backend.rag.store import _find_sent_folder
-
-    PREVIEW = 300
 
     conn = get_connection()
     try:
@@ -377,7 +379,7 @@ def list_sent(limit: int = 50):
 
     capped = max(1, min(limit, 100))
 
-    # Step 1: fast UID search (numbers only, no header download), keep newest `capped`.
+    # Step 1: fast UID search (numbers only, no download), keep newest `capped`.
     # UIDs increase over time, so the largest UIDs are the newest emails.
     with get_mailbox() as mb:
         mb.folder.set(sent_folder, readonly=True)
@@ -385,8 +387,8 @@ def list_sent(limit: int = 50):
         top_uids = sorted(all_uids, key=int, reverse=True)[:capped]
         if not top_uids:
             return {"folder": sent_folder, "emails": []}
-        # Step 2: fetch full bodies for only those UIDs (same connection).
-        msgs = list(mb.fetch(A(uid=top_uids), mark_seen=False, bulk=True))
+        # Step 2: fetch HEADERS ONLY for those UIDs (no body download = fast).
+        msgs = list(mb.fetch(A(uid=top_uids), mark_seen=False, bulk=True, headers_only=True))
 
     by_uid = {m.uid: m for m in msgs}
     out = []
@@ -394,7 +396,6 @@ def list_sent(limit: int = 50):
         m = by_uid.get(uid)
         if not m:
             continue
-        body = m.text or _strip_html(m.html or "")
         to_first = m.to_values[0] if m.to_values else None
         out.append({
             "uid":            int(m.uid),
@@ -403,11 +404,42 @@ def list_sent(limit: int = 50):
             "to_name":        (to_first.name if to_first and to_first.name else ""),
             "to_all":         ", ".join(a.email for a in (m.to_values or [])),
             "date":           m.date.astimezone(timezone.utc).isoformat() if m.date else "",
-            "preview":        body[:PREVIEW].strip(),
-            "has_attachments": bool(m.attachments),
         })
 
     return {"folder": sent_folder, "emails": out}
+
+
+@router.get("/sent/{uid:int}")
+def get_sent_body(uid: int):
+    """
+    Fetch the full body of ONE sent email by UID (live IMAP read).
+    Called when Mo clicks a sent email in the ERP, so we only download a
+    body when it's actually needed instead of all 25 up front.
+    """
+    from imap_tools import A
+    from backend.database.connection import get_connection
+    from backend.email.imap_client import get_mailbox
+    from backend.email.fetcher import _strip_html
+    from backend.rag.store import _find_sent_folder
+
+    conn = get_connection()
+    try:
+        sent_folder = _find_sent_folder(conn)
+    finally:
+        conn.close()
+    if not sent_folder:
+        return {"uid": uid, "body": "", "has_attachments": False}
+
+    with get_mailbox() as mb:
+        mb.folder.set(sent_folder, readonly=True)
+        msgs = list(mb.fetch(A(uid=str(uid)), mark_seen=False, bulk=True))
+
+    if not msgs:
+        return {"uid": uid, "body": "", "has_attachments": False}
+
+    m = msgs[0]
+    body = m.text or _strip_html(m.html or "")
+    return {"uid": uid, "body": body.strip(), "has_attachments": bool(m.attachments)}
 
 
 @router.get("/{email_id:int}")
