@@ -351,6 +351,69 @@ def list_emails(status: str = None, limit: int = 50, ids: str = None):
     return [dict(r) for r in rows]
 
 
+@router.get("/sent")
+def list_sent(limit: int = 50):
+    """
+    Read recent emails from the Sent folder (live IMAP read — NOT stored in the DB).
+    Returns newest first. Used by the ERP 'Sent' tab so Mo can log a sent email
+    against a deal. Auth is enforced at the router level.
+    """
+    from datetime import timezone
+    from imap_tools import A
+    from backend.database.connection import get_connection
+    from backend.email.imap_client import get_mailbox
+    from backend.email.fetcher import _strip_html
+    from backend.rag.store import _find_sent_folder
+
+    PREVIEW = 300
+
+    conn = get_connection()
+    try:
+        sent_folder = _find_sent_folder(conn)
+    finally:
+        conn.close()
+    if not sent_folder:
+        return {"folder": None, "emails": []}
+
+    capped = max(1, min(limit, 100))
+
+    # Step 1: pull all UIDs (headers only — fast), keep the newest `capped`.
+    with get_mailbox() as mb:
+        mb.folder.set(sent_folder, readonly=True)
+        headers = list(mb.fetch(A(all=True), mark_seen=False, bulk=True, headers_only=True))
+    headers.sort(key=lambda m: int(m.uid), reverse=True)
+    top = headers[:capped]
+    top_uids = [m.uid for m in top]
+    if not top_uids:
+        return {"folder": sent_folder, "emails": []}
+
+    # Step 2: fetch full bodies for just those UIDs.
+    with get_mailbox() as mb:
+        mb.folder.set(sent_folder, readonly=True)
+        msgs = list(mb.fetch(A(uid=top_uids), mark_seen=False, bulk=True))
+
+    by_uid = {m.uid: m for m in msgs}
+    out = []
+    for h in top:  # preserve newest-first order
+        m = by_uid.get(h.uid)
+        if not m:
+            continue
+        body = m.text or _strip_html(m.html or "")
+        to_first = m.to_values[0] if m.to_values else None
+        out.append({
+            "uid":            int(m.uid),
+            "subject":        m.subject or "(no subject)",
+            "to_address":     to_first.email if to_first else "",
+            "to_name":        (to_first.name if to_first and to_first.name else ""),
+            "to_all":         ", ".join(a.email for a in (m.to_values or [])),
+            "date":           m.date.astimezone(timezone.utc).isoformat() if m.date else "",
+            "preview":        body[:PREVIEW].strip(),
+            "has_attachments": bool(m.attachments),
+        })
+
+    return {"folder": sent_folder, "emails": out}
+
+
 @router.get("/{email_id:int}")
 def get_email(email_id: int):
     """
