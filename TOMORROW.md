@@ -35,7 +35,13 @@ parts automatically. (Full deployment details are in `CLAUDE.md` → "Deployment
    it to watch `INBOX` directly. First sync of a folder now only pulls the **last 2 days**
    (so it doesn't drag in years of history), then tracks new mail from there. Your recent
    emails (UPS quote, EXTERNAL RFQ) are now in the app.
-6. Fixed deploy blockers along the way: fresh-DB migration crash, a Next.js security
+6. **Migrated the RAG "filing cabinet" (ChromaDB) to the cloud (06-17)** — the email
+   migration had only copied the SQLite database, so the cloud's vector store was empty
+   (RAG ran but found nothing). Uploaded the local `chroma_db` (via a `chroma_import.tar.gz`
+   + startup hook, same pattern as the DB). Cloud now has 443 past emails + 210 sent emails
+   indexed. RAG is now actually personalizing drafts. Confirmed "Learn" is additive/safe —
+   it skips already-indexed emails, never deletes.
+7. Fixed deploy blockers along the way: fresh-DB migration crash, a Next.js security
    bump, and seeding the dashboard password on the hosted DB.
 
 ---
