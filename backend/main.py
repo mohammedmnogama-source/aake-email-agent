@@ -50,6 +50,32 @@ def _apply_pending_import():
     print(f"[startup] Imported database snapshot applied from {pending} -> {db}")
 
 
+def _apply_pending_chroma_import():
+    """One-time RAG migration: if an uploaded 'chroma_import.tar.gz' sits in the
+    data dir, extract it to cleanly replace the chroma_db folder before anything
+    opens ChromaDB. Runs at startup so there is no open handle to corrupt.
+    Idempotent — the archive is removed after a successful import."""
+    import os
+    import shutil
+    import tarfile
+
+    chroma_path = os.environ.get("CHROMA_PATH", "data/chroma_db")
+    parent = os.path.dirname(chroma_path) or "."
+    archive = os.path.join(parent, "chroma_import.tar.gz")
+
+    if not os.path.exists(archive) or os.path.getsize(archive) == 0:
+        return
+
+    # Clean replace: drop the existing (empty) chroma_db, then extract the
+    # uploaded snapshot which contains a top-level 'chroma_db/' folder.
+    if os.path.isdir(chroma_path):
+        shutil.rmtree(chroma_path, ignore_errors=True)
+    with tarfile.open(archive, "r:gz") as tar:
+        tar.extractall(path=parent)
+    os.remove(archive)
+    print(f"[startup] Imported ChromaDB snapshot from {archive} -> {chroma_path}")
+
+
 def _seed_password_if_missing():
     """If DASHBOARD_PASSWORD env var is set and DB has no password yet, hash and store it."""
     if not settings.dashboard_password:
@@ -68,6 +94,7 @@ def _seed_password_if_missing():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _apply_pending_import()
+    _apply_pending_chroma_import()
     init_db(settings.database_path)
     _seed_password_if_missing()
     from backend import scheduler
