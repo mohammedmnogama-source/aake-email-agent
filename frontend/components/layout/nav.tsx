@@ -4,11 +4,12 @@ import { usePathname, useRouter } from 'next/navigation';
 import { clearToken } from '@/lib/auth';
 
 const links = [
-  { href: '/inbox',    label: 'Inbox' },
-  { href: '/briefing', label: '📋 Briefing' },
-  { href: '/facts',    label: '🧠 Brain' },
-  { href: '/usage',    label: '📊 AI Usage' },
-  { href: '/settings', label: 'Settings' },
+  { href: '/inbox',            label: 'Inbox' },
+  { href: '/briefing',         label: '📋 Briefing' },
+  { href: '/suggested-tasks',  label: '🗂 Proposals' },
+  { href: '/facts',            label: '🧠 Brain' },
+  { href: '/usage',            label: '📊 AI Usage' },
+  { href: '/settings',         label: 'Settings' },
 ];
 
 export default function Nav() {

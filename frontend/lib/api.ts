@@ -273,6 +273,18 @@ export const api = {
       priorities: string[];
     }>('/api/inbox/daily-summary', { method: 'POST' }),
 
+  // ── Suggested Tasks (staging proposals) ──────────────────────────────────
+  listPendingTasks: () =>
+    request<any[]>('/api/suggested-tasks/pending'),
+  getTask: (id: number) =>
+    request<any>(`/api/suggested-tasks/${id}`),
+  updateTask: (id: number, data: { description?: string; payload?: any; confidence?: number; evidence_quote?: string }) =>
+    request<any>(`/api/suggested-tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  approveTask: (id: number) =>
+    request<any>(`/api/suggested-tasks/${id}/approve`, { method: 'POST' }),
+  rejectTask: (id: number) =>
+    request<any>(`/api/suggested-tasks/${id}/reject`, { method: 'POST' }),
+
   // ── Trust ─────────────────────────────────────────────────────────────────
   listTrust: () =>
     request<{ threshold: number; categories: any[] }>('/api/trust'),
