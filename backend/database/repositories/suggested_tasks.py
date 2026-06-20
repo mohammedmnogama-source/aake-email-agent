@@ -79,6 +79,22 @@ def get(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def exists_similar(
+    conn: sqlite3.Connection, email_id: int, suggestion_id: int, task_type: str
+) -> bool:
+    """Duplicate-prevention check: True if a staged row already exists for the
+    same (email_id, suggestion_id, task_type). Read-only."""
+    row = conn.execute(
+        """
+        SELECT 1 FROM suggested_tasks
+        WHERE email_id = ? AND suggestion_id = ? AND task_type = ?
+        LIMIT 1
+        """,
+        (email_id, suggestion_id, task_type),
+    ).fetchone()
+    return row is not None
+
+
 def update(conn: sqlite3.Connection, task_id: int, fields: dict) -> bool:
     """Edit human-editable content (description/payload/confidence/etc.).
     Ignores any non-editable keys. Returns True if a row was updated."""

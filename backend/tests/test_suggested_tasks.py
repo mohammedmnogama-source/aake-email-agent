@@ -78,6 +78,16 @@ def test_create_staged_proposal(conn):
     assert row["confidence"] == 0.8
 
 
+def test_exists_similar(conn):
+    email_id = conn.execute("SELECT id FROM emails LIMIT 1").fetchone()["id"]
+    sug_id = conn.execute("SELECT id FROM ai_suggestions LIMIT 1").fetchone()["id"]
+    assert repo.exists_similar(conn, email_id, sug_id, "create_deal") is False
+    _seed(conn, task_type="create_deal")
+    assert repo.exists_similar(conn, email_id, sug_id, "create_deal") is True
+    # different task_type is not a duplicate
+    assert repo.exists_similar(conn, email_id, sug_id, "create_rfq") is False
+
+
 def test_list_pending(conn):
     _seed(conn)
     _seed(conn, description="second")
