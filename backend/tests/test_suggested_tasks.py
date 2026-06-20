@@ -25,18 +25,14 @@ def conn():
     """Fresh temp DB with all migrations applied, plus a seed email + suggestion
     (suggested_tasks has NOT NULL FKs to both).
 
-    NOTE: FK enforcement is turned OFF on this connection. A pre-existing
-    artifact in 000_baseline_rebuilt.sql makes a fresh-from-migrations DB
-    reference a non-existent `emails_v7` (the SQLite FK auto-rename bug, error
-    log #1). The REAL production DB references `emails` correctly, so this is a
-    fresh-build-only quirk. These tests exercise the staging repo's logic, not
-    FK integrity, so disabling FK checks here is safe and keeps scope minimal.
+    FK enforcement stays ON (the connection default). Migration 020 fixed the
+    old `emails_v7` FK artifact (error log #1), so a fresh-from-migrations DB now
+    references `emails` correctly and these inserts satisfy the FK chain.
     """
     tmp = tempfile.mkdtemp()
     db = str(Path(tmp) / "test.db")
     init_db(db)
     c = get_connection()
-    c.execute("PRAGMA foreign_keys = OFF")
     c.execute(
         "INSERT INTO emails (subject, from_address, body_text) VALUES (?,?,?)",
         ("RFQ", "buyer@example.com", "Please quote 10 laptops"),
