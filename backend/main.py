@@ -17,6 +17,7 @@ from backend.routers import (
     prices,
     settings as settings_router,
     style,
+    suggested_tasks,
     trust,
     usage,
     vendors,
@@ -125,6 +126,7 @@ app.include_router(style.router)
 app.include_router(prices.router)
 app.include_router(contacts.router)
 app.include_router(inbox.router)
+app.include_router(suggested_tasks.router)
 app.include_router(trust.router)
 app.include_router(usage.router)
 
