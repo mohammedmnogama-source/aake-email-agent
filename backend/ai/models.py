@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class EmailCategory(str, Enum):
@@ -64,3 +64,51 @@ class GeminiResponse(BaseModel):
     clarification_question: str | None = None
     clarification_options: list[str] | None = None
     suggested_recipients: list[SuggestedRecipient] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: typed business-action extraction (staging only — never calls ERP).
+# All models use extra="forbid" so any extra/injected keys from the model are
+# rejected at validation time instead of silently passing through.
+# ---------------------------------------------------------------------------
+
+
+class BusinessActionType(str, Enum):
+    create_lead = "create_lead"
+    create_rfq = "create_rfq"
+    create_deal = "create_deal"
+    create_task = "create_task"
+    create_contact = "create_contact"
+    log_email_to_deal = "log_email_to_deal"
+
+
+class ExtractedItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product: str | None = None
+    quantity: str | None = None        # free text: "10", "approx 5 units"
+    specifications: str | None = None
+
+
+class BusinessExtraction(BaseModel):
+    """One proposed business action extracted from an email. Staged for human
+    review in suggested_tasks — it is NOT executed and does NOT touch ERP."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_business_action: bool = False
+    action_type: BusinessActionType | None = None
+    customer_company: str | None = None
+    contact_name: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    summary: str | None = None
+    requested_items: list[ExtractedItem] = []
+    urgency: str | None = None
+    deadline: str | None = None
+    erp_endpoint: str | None = None    # advisory; extractor sets the authoritative one
+    payload: dict = {}                 # future ERP call body
+    confidence: float | None = None
+    evidence_quote: str | None = None
+    missing_information: list[str] = []
+    risk_flags: list[str] = []
