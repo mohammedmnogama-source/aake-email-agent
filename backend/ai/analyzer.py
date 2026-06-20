@@ -21,6 +21,7 @@ import json
 import sqlite3
 
 from backend.ai.gemini_client import call_ai
+from backend.ai.injection_guard import fence
 from backend.ai.redactor import redact
 from backend.ai.deal_ai import _build_style_block
 from backend.ai.thread_summarizer import build_thread_summary
@@ -209,7 +210,7 @@ def _analyze_one(conn: sqlite3.Connection, row: sqlite3.Row, model: str) -> None
     suggested_action = _safe_action(result_dict.get("suggested_action"))
 
     # Step 8: Save the suggestion to the database
-    suggestion_repo.create(conn, {
+    suggestion_id = suggestion_repo.create(conn, {
         "email_id": email_id,
         "model_used": model,
         "category": category,
@@ -237,6 +238,28 @@ def _analyze_one(conn: sqlite3.Connection, row: sqlite3.Row, model: str) -> None
 
     # Step 8.5: Auto-finish if category is trusted (Phase 2)
     _maybe_auto_finish(conn, email_id, category, result_dict)
+
+    # Step 8.7 (Phase 2): extract concrete business actions into the
+    # suggested_tasks STAGING table for later human review. This NEVER calls
+    # ERP, NEVER creates CRM records, and NEVER sends anything. Wrapped in
+    # try/except so a failure here can never break the email sync.
+    try:
+        from backend.ai.extractor import extract_and_stage
+
+        staged = extract_and_stage(
+            conn,
+            email_id=email_id,
+            suggestion_id=suggestion_id,
+            category=category,
+            clean_body=clean_body,
+            clean_subject=clean_subject,
+            from_address=from_address,
+            model=model,
+        )
+        if staged:
+            print(f"[analyzer] Email {email_id}: staged {len(staged)} business action(s)")
+    except Exception as e:
+        print(f"[analyzer] Warning: business extraction failed for email {email_id}: {e}")
 
     # Step 8.6: Build the whole-thread briefing and store it on the suggestion.
     # This is the "context summary" Mo sees in the ERP — automatic at sync time.
@@ -306,7 +329,9 @@ def _build_user_message(
         f"From: {sender} <{from_address}>",
         f"Subject: {subject}",
         "",
-        body,
+        # The email body is untrusted external content — fence it as DATA so any
+        # instructions hidden inside it are not obeyed (prompt-injection defense).
+        fence(body, "EMAIL_BODY"),
     ]
 
     # Section 1.3: what we know about this sender (deals, customer history)
@@ -344,7 +369,8 @@ def _build_user_message(
             lines.append(f"\n--- Past Email {i} ---")
             lines.append(f"Subject: {past['subject']}")
             preview = past["document"][:250] + ("..." if len(past["document"]) > 250 else "")
-            lines.append(preview)
+            # RAG snippets are also untrusted past-email content — fence them.
+            lines.append(fence(preview, "PAST_EMAIL"))
             if past["action_taken"]:
                 lines.append(f"How it was handled: {past['action_taken']}")
 
