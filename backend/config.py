@@ -35,5 +35,24 @@ class Settings(BaseSettings):
     zoho_refresh_token: str = ""
     zoho_owner_id: str = "7268132000000593001"
 
+    # ERP integration (Phase 2 — not used yet).
+    # Pydantic reads these from the env vars ERP_BASE_URL / ERP_SHARED_SECRET
+    # (matching is case-insensitive). Both default to "" so the app still boots
+    # when they are unset. The secret is a plain str and must NEVER be logged.
+    erp_base_url: str = ""
+    erp_shared_secret: str = ""
+
+    def require_erp_base_url(self) -> str:
+        """Return the ERP base URL, warning (not crashing) if it is missing.
+        The future ERP client should call this instead of reading the field
+        directly, so a missing URL is logged loudly but safely. Never touches
+        the shared secret."""
+        if not self.erp_base_url:
+            import logging
+            logging.getLogger(__name__).warning(
+                "ERP_BASE_URL is not set — ERP integration is disabled."
+            )
+        return self.erp_base_url
+
 
 settings = Settings()
