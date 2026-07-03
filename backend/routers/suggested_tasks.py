@@ -1,9 +1,10 @@
-"""Review API for the `suggested_tasks` staging table.
+"""Review + execute API for the `suggested_tasks` staging table.
 
-Staging/scratchpad only — these endpoints let a human review and edit proposed
-ERP actions. They DO NOT call ERP and DO NOT create CRM records. The approve
-endpoint only flips the approved flag; actual execution is a future, separate
-step once the ERP client/applier exists.
+Review endpoints let a human review, edit, approve or reject proposed ERP
+actions — none of those call ERP. The separate, human-triggered `execute`
+endpoint is the ONLY place that pushes an approved create_task to the ERP, via
+an atomic claim + attempt fence so repeated/concurrent clicks and retries can
+never create duplicate ERP tasks.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,9 @@ from pydantic import BaseModel
 
 from backend.database.connection import get_connection
 from backend.database.repositories import suggested_tasks as repo
+from backend.database.repositories.suggested_tasks import NotEditableError
+from backend.integrations import erp_client
+from backend.integrations.erp_client import ErpConfigError, ErpError, build_task_payload
 from backend.middleware.auth import require_auth
 
 router = APIRouter(
@@ -48,6 +52,18 @@ def list_pending():
             """
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/approved")
+def list_approved():
+    """Approved proposals (approved=1) in any execution state, newest first, with
+    an `execution_is_stale` flag so the UI knows when an `executing` row may be
+    re-triggered. This is the list the Execute action operates on."""
+    conn = get_connection()
+    try:
+        return [dict(r) for r in repo.list_approved(conn)]
     finally:
         conn.close()
 
@@ -111,12 +127,17 @@ def get_one(task_id: int):
 
 @router.patch("/{task_id:int}")
 def edit(task_id: int, body: EditBody):
+    """Edit content. Rejected (409) for executing/executed rows. A successful
+    edit also resets the row to pending approval (see repo.update)."""
     fields = body.model_dump(exclude_none=True)
     conn = get_connection()
     try:
         if repo.get(conn, task_id) is None:
             raise HTTPException(status_code=404, detail="suggested_task not found")
-        repo.update(conn, task_id, fields)
+        try:
+            repo.update(conn, task_id, fields)
+        except NotEditableError as e:
+            raise HTTPException(status_code=409, detail=str(e))
         return dict(repo.get(conn, task_id))
     finally:
         conn.close()
@@ -137,12 +158,78 @@ def reject(task_id: int):
 @router.post("/{task_id:int}/approve")
 def approve(task_id: int):
     """Flips approved=1 ONLY. Does not call ERP, does not create CRM records.
-    Execution is a future, separate step."""
+    Rejects executing/executed rows. Execution is a separate endpoint."""
     conn = get_connection()
     try:
         if repo.get(conn, task_id) is None:
             raise HTTPException(status_code=404, detail="suggested_task not found")
         ok = repo.set_approved(conn, task_id)
         return {"approved": ok}
+    finally:
+        conn.close()
+
+
+@router.post("/{task_id:int}/execute")
+def execute(task_id: int):
+    """Human-triggered ERP Create Task. The ONLY endpoint that calls the ERP.
+
+    Approval never routes here. Uses an atomic claim + attempt fence so repeated
+    clicks, concurrent clicks, retries and timeouts cannot create duplicate ERP
+    tasks. Already-executed rows return the stored ERP UUID without a network
+    call. Never retries automatically.
+    """
+    conn = get_connection()
+    try:
+        row = repo.get(conn, task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="suggested_task not found")
+        if row["task_type"] != "create_task":
+            raise HTTPException(status_code=400, detail="Only create_task suggestions can be executed")
+        if row["approved"] == -1:
+            raise HTTPException(status_code=400, detail="Rejected suggestion cannot be executed")
+        if row["approved"] != 1:
+            raise HTTPException(status_code=400, detail="Suggestion must be approved before execution")
+
+        # Already executed -> idempotent success, no ERP call.
+        if row["executed_at"] is not None:
+            if row["erp_reference"]:
+                return {"status": "executed", "erp_reference": row["erp_reference"], "duplicate": False}
+            raise HTTPException(status_code=409, detail="Executed row is missing an ERP reference; manual review required")
+
+        # A fresh (non-stale) claim held by another worker -> in progress.
+        if row["execution_status"] == "executing" and not repo.is_stale_claim(row, conn):
+            raise HTTPException(status_code=409, detail="Execution already in progress")
+
+        claimed = repo.claim_execution(conn, task_id)
+        if claimed is None:
+            fresh = repo.get(conn, task_id)
+            if fresh and fresh["executed_at"] and fresh["erp_reference"]:
+                return {"status": "executed", "erp_reference": fresh["erp_reference"], "duplicate": False}
+            raise HTTPException(status_code=409, detail="Execution already in progress")
+
+        claimed_row, attempt_id = claimed
+        body = build_task_payload(dict(claimed_row))
+
+        try:
+            result = erp_client.create_task(body)
+        except ErpConfigError:
+            repo.mark_failed(conn, task_id, attempt_id, "ERP integration is not configured")
+            raise HTTPException(status_code=503, detail="ERP integration is not configured")
+        except ErpError as e:
+            repo.mark_failed(conn, task_id, attempt_id, str(e))
+            raise HTTPException(status_code=502, detail=f"ERP task creation failed: {e}")
+
+        # Fresh success and duplicate=true reconcile identically. The fence
+        # ensures only this attempt writes; if a newer attempt reclaimed the row
+        # meanwhile, its idempotent result already holds (same agent key).
+        won = repo.reconcile_executed(conn, task_id, attempt_id, result["id"])
+        if not won:
+            # A newer attempt reclaimed this row while our ERP call was in flight.
+            # Thanks to the shared agent_suggestion_key the ERP result is the same
+            # task; prefer the row's stored reference, else our own valid id.
+            fresh = repo.get(conn, task_id)
+            ref = (fresh["erp_reference"] if fresh else None) or result["id"]
+            return {"status": "executed", "erp_reference": ref, "duplicate": result["duplicate"]}
+        return {"status": "executed", "erp_reference": result["id"], "duplicate": result["duplicate"]}
     finally:
         conn.close()

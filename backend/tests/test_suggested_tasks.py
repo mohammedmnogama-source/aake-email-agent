@@ -161,9 +161,181 @@ def test_no_crm_tables_touched(conn):
 
 
 def test_repo_imports_no_erp(conn):
-    """The repository must not pull in any ERP client module."""
-    import sys
+    """The staging repository layer itself must not import/call the ERP client.
+    (The ERP client legitimately exists and is used only by the execute route.)"""
+    import inspect
 
-    assert not any("erp" in m.lower() for m in sys.modules if "backend" in m), (
-        "an ERP module was imported by the staging layer"
+    src = inspect.getsource(repo)
+    assert "erp_client" not in src
+    assert "integrations.erp" not in src
+    assert "X-AAKE-Agent-Secret" not in src
+
+
+# --------------------------------------------------------------------------- #
+# Execution state machine (migration 021)
+# --------------------------------------------------------------------------- #
+
+import uuid as _uuid
+
+
+def _approved_task(c):
+    """Seed a create_task proposal and approve it. Returns its id."""
+    tid = _seed(c, task_type="create_task")
+    assert repo.set_approved(c, tid) is True
+    return tid
+
+
+def _make_stale(c, tid, seconds=300):
+    c.execute(
+        "UPDATE suggested_tasks SET execution_claimed_at = datetime('now', ?) WHERE id = ?",
+        (f"-{seconds} seconds", tid),
     )
+    c.commit()
+
+
+def test_new_suggestion_gets_uuid4_key(conn):
+    tid = _seed(conn)
+    key = repo.get(conn, tid)["agent_suggestion_key"]
+    assert key and _uuid.UUID(key).version == 4
+
+
+def test_key_is_stable_across_edit_and_state_changes(conn):
+    tid = _approved_task(conn)
+    key0 = repo.get(conn, tid)["agent_suggestion_key"]
+    repo.update(conn, tid, {"description": "changed"})
+    repo.set_approved(conn, tid)
+    assert repo.get(conn, tid)["agent_suggestion_key"] == key0
+
+
+def test_claim_requires_approved(conn):
+    tid = _seed(conn, task_type="create_task")  # NOT approved
+    assert repo.claim_execution(conn, tid) is None
+
+
+def test_claim_requires_create_task_type(conn):
+    tid = _seed(conn, task_type="create_deal")
+    repo.set_approved(conn, tid)
+    assert repo.claim_execution(conn, tid) is None
+
+
+def test_single_claim_winner(conn):
+    tid = _approved_task(conn)
+    first = repo.claim_execution(conn, tid)
+    assert first is not None
+    row, attempt = first
+    assert row["execution_status"] == "executing"
+    assert row["execution_attempt_id"] == attempt
+    # A second immediate claim (fresh executing) must lose.
+    assert repo.claim_execution(conn, tid) is None
+
+
+def test_fresh_executing_not_reclaimed(conn):
+    tid = _approved_task(conn)
+    repo.claim_execution(conn, tid)
+    assert repo.claim_execution(conn, tid) is None
+
+
+def test_stale_executing_reclaimed_with_new_attempt(conn):
+    tid = _approved_task(conn)
+    _row, attempt_a = repo.claim_execution(conn, tid)
+    _make_stale(conn, tid)
+    second = repo.claim_execution(conn, tid)
+    assert second is not None
+    _row2, attempt_b = second
+    assert attempt_b != attempt_a
+
+
+def test_old_attempt_cannot_reconcile_after_reclaim(conn):
+    tid = _approved_task(conn)
+    _r, attempt_a = repo.claim_execution(conn, tid)
+    _make_stale(conn, tid)
+    _r2, attempt_b = repo.claim_execution(conn, tid)
+    assert repo.reconcile_executed(conn, tid, attempt_a, str(_uuid.uuid4())) is False
+    assert repo.get(conn, tid)["executed_at"] is None
+    good = str(_uuid.uuid4())
+    assert repo.reconcile_executed(conn, tid, attempt_b, good) is True
+    row = repo.get(conn, tid)
+    assert row["executed_at"] is not None and row["erp_reference"] == good
+
+
+def test_old_attempt_cannot_fail_after_reclaim(conn):
+    tid = _approved_task(conn)
+    _r, attempt_a = repo.claim_execution(conn, tid)
+    _make_stale(conn, tid)
+    _r2, attempt_b = repo.claim_execution(conn, tid)
+    assert repo.mark_failed(conn, tid, attempt_a, "stale worker error") is False
+    assert repo.get(conn, tid)["execution_status"] == "executing"
+
+
+def test_reconcile_sets_uuid_and_executed_together(conn):
+    tid = _approved_task(conn)
+    _r, attempt = repo.claim_execution(conn, tid)
+    ref = str(_uuid.uuid4())
+    assert repo.reconcile_executed(conn, tid, attempt, ref) is True
+    row = repo.get(conn, tid)
+    assert row["execution_status"] == "executed"
+    assert row["executed_at"] is not None
+    assert row["erp_reference"] == ref
+    assert row["error_message"] is None
+
+
+def test_reconcile_refuses_blank_reference(conn):
+    tid = _approved_task(conn)
+    _r, attempt = repo.claim_execution(conn, tid)
+    with pytest.raises(ValueError):
+        repo.reconcile_executed(conn, tid, attempt, "")
+    assert repo.get(conn, tid)["executed_at"] is None
+
+
+def test_mark_failed_keeps_retryable(conn):
+    tid = _approved_task(conn)
+    _r, attempt = repo.claim_execution(conn, tid)
+    assert repo.mark_failed(conn, tid, attempt, "boom") is True
+    row = repo.get(conn, tid)
+    assert row["execution_status"] == "failed"
+    assert row["executed_at"] is None
+    assert row["erp_reference"] is None
+    assert row["error_message"] == "boom"
+    assert repo.claim_execution(conn, tid) is not None  # human retry
+
+
+def test_edit_resets_approval_and_execution(conn):
+    tid = _approved_task(conn)
+    _r, attempt = repo.claim_execution(conn, tid)
+    repo.mark_failed(conn, tid, attempt, "boom")
+    repo.update(conn, tid, {"description": "corrected"})
+    row = repo.get(conn, tid)
+    assert row["approved"] == 0
+    assert row["execution_status"] == "pending"
+    assert row["error_message"] is None
+    assert row["execution_claimed_at"] is None
+    assert row["execution_attempt_id"] is None
+
+
+def test_executing_row_not_editable(conn):
+    tid = _approved_task(conn)
+    repo.claim_execution(conn, tid)
+    with pytest.raises(repo.NotEditableError):
+        repo.update(conn, tid, {"description": "nope"})
+
+
+def test_executed_row_not_editable(conn):
+    tid = _approved_task(conn)
+    _r, attempt = repo.claim_execution(conn, tid)
+    repo.reconcile_executed(conn, tid, attempt, str(_uuid.uuid4()))
+    with pytest.raises(repo.NotEditableError):
+        repo.update(conn, tid, {"description": "nope"})
+
+
+def test_approve_rejects_executing(conn):
+    tid = _approved_task(conn)
+    repo.claim_execution(conn, tid)
+    assert repo.set_approved(conn, tid) is False
+    assert repo.get(conn, tid)["execution_status"] == "executing"
+
+
+def test_reject_ignores_executing(conn):
+    tid = _approved_task(conn)
+    repo.claim_execution(conn, tid)
+    assert repo.reject(conn, tid) is False
+    assert repo.get(conn, tid)["approved"] == 1

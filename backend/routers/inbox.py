@@ -39,12 +39,6 @@ class ErpLeadRequest(BaseModel):
     notes:       Optional[str] = None
 
 
-class ErpTaskRequest(BaseModel):
-    title:       str
-    description: Optional[str] = None
-    priority:    Optional[str] = "medium"
-    due_date:    Optional[str] = None
-
 class ComposeRequest(BaseModel):
     description: str            # what Mo wants to say, in plain words
     to_name:     Optional[str] = None
@@ -472,7 +466,6 @@ def get_email(email_id: int):
 _ERP_BASE  = "https://frontend-gamma-seven-9d9hr1vyhv.vercel.app"
 _ERP_URL   = f"{_ERP_BASE}/api/rfqs"
 _LEADS_URL = f"{_ERP_BASE}/api/leads"
-_TASKS_URL = f"{_ERP_BASE}/api/tasks"
 
 
 def _erp_post(url: str, payload: dict):
@@ -525,14 +518,15 @@ def save_as_lead(email_id: int, body: ErpLeadRequest):
 
 
 @router.post("/{email_id}/create-task")
-def create_erp_task(email_id: int, body: ErpTaskRequest):
-    """Create a follow-up Task in Aqeeq Intelligence ERP."""
-    return _erp_post(_TASKS_URL, {
-        "title":       body.title,
-        "description": body.description,
-        "priority":    body.priority,
-        "due_date":    body.due_date,
-    })
+def create_erp_task(email_id: int):
+    """RETIRED. The old unauthenticated direct task path is disabled. Create
+    tasks via the reviewed, authenticated, idempotent flow:
+    POST /api/suggested-tasks/{id}/execute after approval."""
+    raise HTTPException(
+        status_code=410,
+        detail="This endpoint is retired. Use the AI Proposals review flow "
+               "(/api/suggested-tasks/{id}/execute) to create ERP tasks.",
+    )
 
 
 @router.patch("/{email_id}/read")
