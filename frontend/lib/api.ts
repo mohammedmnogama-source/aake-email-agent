@@ -276,6 +276,8 @@ export const api = {
   // ── Suggested Tasks (staging proposals) ──────────────────────────────────
   listPendingTasks: () =>
     request<any[]>('/api/suggested-tasks/pending'),
+  listApprovedTasks: () =>
+    request<any[]>('/api/suggested-tasks/approved'),
   getTask: (id: number) =>
     request<any>(`/api/suggested-tasks/${id}`),
   updateTask: (id: number, data: { description?: string; payload?: any; confidence?: number; evidence_quote?: string }) =>
@@ -284,6 +286,11 @@ export const api = {
     request<any>(`/api/suggested-tasks/${id}/approve`, { method: 'POST' }),
   rejectTask: (id: number) =>
     request<any>(`/api/suggested-tasks/${id}/reject`, { method: 'POST' }),
+  // Human-triggered ERP Create Task — the only client call that reaches the ERP.
+  executeTask: (id: number) =>
+    request<{ status: string; erp_reference: string | null; duplicate: boolean }>(
+      `/api/suggested-tasks/${id}/execute`, { method: 'POST' }
+    ),
 
   // ── Trust ─────────────────────────────────────────────────────────────────
   listTrust: () =>

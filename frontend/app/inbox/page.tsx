@@ -105,10 +105,8 @@ export default function InboxPage() {
   const [leadForm, setLeadForm]       = useState({ first_name: '', last_name: '', company: '', email: '', phone: '', notes: '' });
   const [leadSending, setLeadSending] = useState(false);
 
-  // ERP — Task modal
-  const [taskModal, setTaskModal]     = useState(false);
-  const [taskForm, setTaskForm]       = useState({ title: '', description: '', priority: 'medium', due_date: '' });
-  const [taskSending, setTaskSending] = useState(false);
+  // ERP task creation retired here — use the AI Proposals page
+  // (/suggested-tasks) approve → "Create Task in ERP" flow instead.
 
   // Compose modal
   const [composeModal, setComposeModal] = useState(false);
@@ -397,37 +395,8 @@ export default function InboxPage() {
     }
   }
 
-  function openTaskModal() {
-    if (!selected) return;
-    const e = selected.email;
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    setTaskForm({
-      title:       `Follow up: ${e.subject || '(no subject)'}`,
-      description: selected.suggestion?.summary || '',
-      priority:    'medium',
-      due_date:    tomorrow.toISOString().split('T')[0],
-    });
-    setTaskModal(true);
-  }
-
-  async function createTask() {
-    if (!selected?.email?.id) return;
-    setTaskSending(true);
-    try {
-      const data = await post(`/api/inbox/${selected.email.id}/create-task`, taskForm);
-      if (data.ok) {
-        setMessage('✅ Task created in ERP!');
-        setTaskModal(false);
-      } else {
-        setMessage(`Task error: ${data.error || 'Unknown error'}`);
-      }
-    } catch {
-      setMessage('Could not create task. Is the ERP /api/tasks endpoint built?');
-    } finally {
-      setTaskSending(false);
-    }
-  }
+  // ERP task creation was retired from the inbox. Tasks are now created through
+  // the reviewed, authenticated, idempotent AI Proposals flow (/suggested-tasks).
 
   async function openEmail(emailId: number) {
     const detail = await get(`/api/inbox/${emailId}`);
@@ -910,10 +879,6 @@ export default function InboxPage() {
                       👤 Save as Lead
                     </button>
                   )}
-                  <button onClick={openTaskModal}
-                    className="text-sm px-3 py-1.5 rounded border border-amber-300 text-amber-700 hover:bg-amber-50 font-medium">
-                    ✅ Create Task
-                  </button>
                 </div>
               </div>
 
@@ -989,53 +954,6 @@ export default function InboxPage() {
         </div>
       )}
 
-      {/* Task Modal */}
-      {taskModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
-            <h2 className="text-lg font-semibold text-slate-800 mb-1">Create Task</h2>
-            <p className="text-xs text-slate-500 mb-4">Adds a follow-up task in Aqeeq Intelligence ERP.</p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-500 uppercase">Title</label>
-                <input value={taskForm.title} onChange={e => setTaskForm(f => ({...f, title: e.target.value}))}
-                  className="mt-1 w-full text-sm border border-slate-200 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-300" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-500 uppercase">Description</label>
-                <textarea value={taskForm.description} onChange={e => setTaskForm(f => ({...f, description: e.target.value}))}
-                  rows={3}
-                  className="mt-1 w-full text-sm border border-slate-200 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-300 resize-none" />
-              </div>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-xs font-semibold text-slate-500 uppercase">Priority</label>
-                  <select value={taskForm.priority} onChange={e => setTaskForm(f => ({...f, priority: e.target.value}))}
-                    className="mt-1 w-full text-sm border border-slate-200 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-300">
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className="text-xs font-semibold text-slate-500 uppercase">Due Date</label>
-                  <input type="date" value={taskForm.due_date} onChange={e => setTaskForm(f => ({...f, due_date: e.target.value}))}
-                    className="mt-1 w-full text-sm border border-slate-200 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-300" />
-                </div>
-              </div>
-            </div>
-            <div className="mt-5 flex gap-2 justify-end">
-              <button onClick={() => setTaskModal(false)}
-                className="text-sm px-4 py-2 rounded border border-slate-300 text-slate-600 hover:bg-slate-100">Cancel</button>
-              <button onClick={createTask} disabled={taskSending}
-                className="text-sm px-4 py-2 rounded bg-amber-500 text-white hover:bg-amber-400 disabled:opacity-50 font-medium">
-                {taskSending ? 'Creating...' : '✅ Create Task'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ERP Modal */}
       {erpModal && (

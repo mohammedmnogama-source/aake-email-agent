@@ -175,7 +175,33 @@ def test_no_crm_records_created(conn, monkeypatch):
 
 
 def test_no_erp_module_imported():
+    """The extraction/staging path must not import the ERP execution client.
+
+    Runs in a CLEAN subprocess so the check is deterministic: it inspects only
+    the modules introduced by importing backend.ai.extractor, not the shared
+    global sys.modules that other tests legitimately pollute by importing
+    backend.integrations.erp_client.
+    """
+    import subprocess
     import sys
-    assert not any("erp" in m.lower() for m in sys.modules if "backend" in m), (
-        "an ERP module was imported by the extraction path"
+
+    # Import the extractor in a fresh interpreter, then list every backend
+    # module that its import pulled in. If the staging code ever depended on
+    # the ERP client, "backend.integrations.erp_client" would appear here.
+    code = (
+        "import sys\n"
+        "import backend.ai.extractor\n"
+        "print('\\n'.join(m for m in sys.modules if 'backend' in m))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(Path(__file__).resolve().parents[2]),  # repo root
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    backend_modules = result.stdout.split()
+    erp_modules = [m for m in backend_modules if "erp" in m.lower()]
+    assert not erp_modules, (
+        f"the extraction path imported ERP module(s): {erp_modules}"
     )
